@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HitchOne - 장거리 카풀 & 히치하이킹</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet / OpenStreetMap: Kakao 키가 없어도 지도에서 위치를 선택할 수 있습니다. -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-gray-100 min-h-screen text-gray-800 flex flex-col">
+
+    <!-- 상단 네비게이션 헤더 -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm">
+        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3 cursor-pointer" onclick="switchTab('feed')">
+                <span class="bg-yellow-400 text-gray-900 font-black px-2.5 py-1 rounded-lg text-xl tracking-tight">H1</span>
+                <h1 class="text-xl font-bold tracking-tight text-gray-900">HitchOne</h1>
+            </div>
+
+            <nav class="hidden md:flex items-center gap-1 font-medium text-sm">
+                <button onclick="switchTab('feed')" id="nav-feed" class="nav-btn px-4 py-2 rounded-full text-yellow-600 bg-yellow-50 font-bold">카풀 찾기</button>
+                <button onclick="switchTab('host')" id="nav-host" class="nav-btn px-4 py-2 rounded-full text-gray-600 hover:bg-gray-100">모집글 등록</button>
+                <button onclick="switchTab('chat')" id="nav-chat" class="nav-btn px-4 py-2 rounded-full text-gray-600 hover:bg-gray-100 relative">
+                    채팅
+                    <span id="chat-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full font-bold">2</span>
+                </button>
+                <button onclick="switchTab('profile')" id="nav-profile" class="nav-btn px-4 py-2 rounded-full text-gray-600 hover:bg-gray-100">마이페이지</button>
+            </nav>
+
+            <button onclick="openSosModal()" class="sos-pulse bg-red-600 hover:bg-red-700 text-white px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 shadow-md transition-all">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+                <span>SOS 긴급</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- 메인 컨텐츠 영역 -->
+    <main class="max-w-6xl mx-auto px-4 py-6 flex-1 w-full">
+        
+        <!-- TAB 1: 카풀 검색 및 피드 -->
+        <section id="tab-feed" class="tab-content">
+            <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-200 mb-6">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">출발지</label>
+                        <input type="text" id="search-origin" placeholder="예: 서울 강남구" class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">도착지</label>
+                        <input type="text" id="search-dest" placeholder="예: 부산 해운대구" class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 mb-1">날짜</label>
+                        <input type="date" id="search-date" class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400">
+                    </div>
+                    <div class="flex items-end gap-2">
+                        <button onclick="applyFilter()" class="flex-1 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold py-2 px-4 rounded-xl text-sm transition-colors">
+                            <i class="fa-solid fa-magnifying-glass mr-1"></i> 검색
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4 text-xs font-medium text-gray-600">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" id="filter-female" onchange="applyFilter()" class="rounded text-yellow-500 focus:ring-yellow-400">
+                        <span>여성 전용 카풀만 보기</span>
+                    </label>
+                </div>
+            </div>
+
+            <div id="ride-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- JS 랜더링 영역 -->
+            </div>
+        </section>
+
+        <!-- TAB 2: 모집글 등록 (Kakao Map 지도 검색 및 스마트 경로 연동) -->
+        <section id="tab-host" class="tab-content hidden">
+            <div class="max-w-2xl mx-auto bg-white rounded-2xl p-6 shadow-sm border border-gray-200">
+                <h2 class="text-lg font-bold text-gray-900 mb-4 pb-2 border-b border-gray-100 flex items-center gap-2">
+                    <i class="fa-solid fa-car-side text-yellow-500"></i> 장거리 카풀 모집하기
+                </h2>
+
+                <form id="host-form" onsubmit="handleHostSubmit(event)" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">출발지 *</label>
+                            <div class="flex gap-1.5">
+                                <input type="text" id="host-origin" required placeholder="예: 서울역" class="flex-1 p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+                                <button type="button" onclick="searchLocationAndPlot('origin')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl text-xs font-bold transition-colors">
+                                    <i class="fa-solid fa-location-dot text-yellow-500"></i> 조회
+                                </button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">도착지 *</label>
+                            <div class="flex gap-1.5">
+                                <input type="text" id="host-dest" required placeholder="예: 부산역" class="flex-1 p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+                                <button type="button" onclick="searchLocationAndPlot('dest')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl text-xs font-bold transition-colors">
+                                    <i class="fa-solid fa-location-dot text-yellow-500"></i> 조회
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 지도에서 출발지/도착지 선택 및 경로 미리보기 -->
+                    <div>
+                        <div class="flex justify-between items-center mb-1">
+                            <label class="block text-xs font-semibold text-gray-600">주소 위치 및 노선 미리보기</label>
+                            <span class="text-[11px] text-blue-600 font-medium" id="map-route-status">지도를 불러오는 중...</span>
+                        </div>
+                        <div class="flex items-center gap-2 mb-2 text-xs">
+                            <span class="text-gray-500">지도 클릭 위치:</span>
+                            <button type="button" id="map-select-origin" aria-pressed="false" onclick="setMapSelectionTarget('origin')" class="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-600 font-semibold">출발지</button>
+                            <button type="button" id="map-select-dest" aria-pressed="true" onclick="setMapSelectionTarget('dest')" class="px-2.5 py-1 rounded-lg bg-yellow-400 text-gray-900 font-semibold">도착지</button>
+                            <span class="text-gray-400">지도를 클릭하면 주소가 입력됩니다.</span>
+                        </div>
+                        <div id="host-map" class="w-full h-52 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center relative overflow-hidden">
+                            <span class="text-xs text-gray-400 flex items-center gap-1">
+                                <i class="fa-solid fa-map-location-dot"></i> 지도를 불러오는 중...
+                            </span>
+                        </div>
+                        <p class="mt-1 text-[10px] text-gray-400">지도 데이터 © OpenStreetMap · 주소 검색 Photon</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">출발 일시 *</label>
+                            <input type="datetime-local" id="host-time" required class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-600 mb-1">모집 인원 *</label>
+                            <select id="host-seats" onchange="calculateCostCap()" class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+                                <option value="1">1명</option>
+                                <option value="2">2명</option>
+                                <option value="3" selected>3명</option>
+                                <option value="4">4명</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- 비용 분담 참고 계산기 -->
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-xl p-4 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-yellow-900 flex items-center gap-1">
+                                <i class="fa-solid fa-calculator"></i> 예상 비용 분담금 계산
+                            </span>
+                            <span class="text-[11px] text-yellow-700">(연료비 + 통행료) ÷ 전체 탑승 인원</span>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 text-xs">
+                            <div>
+                                <label class="text-gray-500 block mb-0.5">예상 통행료(원)</label>
+                                <input type="number" id="calc-toll" min="0" value="15000" oninput="calculateCostCap()" class="w-full p-1.5 bg-white border border-yellow-300 rounded-lg text-right font-medium">
+                            </div>
+                            <div>
+                                <label class="text-gray-500 block mb-0.5">이동거리(km)</label>
+                                <input type="number" id="calc-dist" min="0" value="380" oninput="calculateCostCap()" class="w-full p-1.5 bg-white border border-yellow-300 rounded-lg text-right font-medium">
+                            </div>
+                            <div>
+                                <label class="text-gray-500 block mb-0.5">평균 연비(km/L)</label>
+                                <input type="number" id="calc-eff" min="1" value="12" oninput="calculateCostCap()" class="w-full p-1.5 bg-white border border-yellow-300 rounded-lg text-right font-medium">
+                            </div>
+                        </div>
+                        <div class="pt-2 border-t border-yellow-200 flex justify-between items-center">
+                            <span class="text-xs font-bold text-gray-700">1인당 예상 비용</span>
+                            <span id="cost-cap-result" class="text-base font-extrabold text-yellow-900">21,880원</span>
+                        </div>
+                        <p class="text-[10px] leading-relaxed text-yellow-800">주말·공휴일은 시간 제한 없이 유료 모집이 가능합니다. 일반 평일은 07:00–09:00, 18:00–21:00에만 유료 모집되며 그 외 시간은 무료로 등록됩니다.</p>
+                        <p class="text-[10px] leading-relaxed text-yellow-800">예상 분담금은 입력한 거리·연비·통행료를 기준으로 한 참고용 금액입니다.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">설정 1인당 분담금</label>
+                        <input type="number" id="host-price" min="0" step="100" value="0" placeholder="예상 비용 이하로 입력" oninput="calculateCostCap()" required disabled class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <p id="pricing-status" role="status" aria-live="polite" class="mt-1 text-xs text-gray-500">출발 일시를 선택하면 유료 가능 여부를 확인합니다.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-600 mb-1">동승 조건 태그</label>
+                        <div class="flex flex-wrap gap-2 text-xs">
+                            <label class="bg-gray-100 px-3 py-1.5 rounded-full cursor-pointer hover:bg-gray-200"><input type="checkbox" value="금연" class="mr-1">🚭 금연</label>
+                            <label class="bg-gray-100 px-3 py-1.5 rounded-full cursor-pointer hover:bg-gray-200"><input type="checkbox" id="tag-female" value="여성전용" class="mr-1">👩 여성전용</label>
+                            <label class="bg-gray-100 px-3 py-1.5 rounded-full cursor-pointer hover:bg-gray-200"><input type="checkbox" value="반려동물" class="mr-1">🐾 반려동물 가능</label>
+                            <label class="bg-gray-100 px-3 py-1.5 rounded-full cursor-pointer hover:bg-gray-200"><input type="checkbox" value="대형캐리어" class="mr-1">🧳 대형캐리어 가능</label>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="w-full bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold py-3 rounded-xl transition-colors mt-2">
+                        모집글 등록하기
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- TAB 3: 채팅 -->
+        <section id="tab-chat" class="tab-content hidden">
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 h-[650px] flex overflow-hidden">
+                <div id="chat-list-panel" class="w-full md:w-1/3 border-r border-gray-200 flex flex-col bg-gray-50">
+                    <div class="p-3.5 border-b border-gray-200 font-bold text-gray-800 flex justify-between items-center bg-white">
+                        <span>채팅 목록</span>
+                        <span class="text-xs bg-yellow-400 text-gray-900 px-2 py-0.5 rounded-full">2개</span>
+                    </div>
+                    <div id="chat-threads" class="overflow-y-auto flex-1 divide-y divide-gray-100"></div>
+                </div>
+
+                <div id="chat-room-panel" class="hidden md:flex flex-1 flex-col bg-[#b2c7da]">
+                    <div id="chat-header" class="p-3 bg-white border-b border-gray-200 flex items-center justify-between shadow-sm">
+                        <div class="flex items-center gap-2">
+                            <button onclick="backToChatList()" class="md:hidden text-gray-600 mr-1 px-1">
+                                <i class="fa-solid fa-chevron-left text-lg"></i>
+                            </button>
+                            <img id="chat-user-img" src="" class="w-9 h-9 rounded-full object-cover">
+                            <div>
+                                <div class="font-bold text-sm text-gray-900" id="chat-user-name">상대방</div>
+                                <div class="text-[11px] text-gray-500" id="chat-route-info">노선 정보</div>
+                            </div>
+                        </div>
+                        <span class="text-xs bg-yellow-100 text-yellow-800 px-2 py-1 rounded font-semibold">매너온도 <span id="chat-user-temp">36.5</span>°C</span>
+                    </div>
+
+                    <div id="chat-messages" class="flex-1 p-4 overflow-y-auto space-y-3"></div>
+
+                    <form onsubmit="handleSendMessage(event)" class="p-2.5 bg-white border-t border-gray-200 flex gap-2 items-center">
+                        <input type="text" id="chat-input" placeholder="메시지를 입력하세요..." class="flex-1 bg-gray-100 border-none rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-yellow-400">
+                        <button type="submit" class="bg-[#fee500] hover:bg-yellow-400 text-gray-900 font-bold px-4 py-2 rounded-xl text-sm transition-colors">
+                            전송
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <!-- TAB 4: 마이페이지 -->
+        <section id="tab-profile" class="tab-content hidden">
+            <div class="max-w-2xl mx-auto space-y-5">
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
+                    <div class="flex items-center gap-4">
+                        <div class="relative">
+                            <img id="profile-display-img" src="" class="w-16 h-16 rounded-full object-cover border-2 border-yellow-400 shadow-sm">
+                            <button onclick="openProfileEditModal()" class="absolute bottom-0 right-0 bg-gray-900 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] hover:bg-yellow-500 transition-colors">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
+                        </div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h3 id="profile-display-name" class="font-bold text-lg text-gray-900">사용자</h3>
+                                <span id="profile-badge-driver" class="bg-blue-100 text-blue-700 text-[11px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
+                                    <i class="fa-solid fa-shield-halved"></i> 인증 드라이버
+                                </span>
+                            </div>
+                            <p id="profile-display-phone" class="text-xs text-gray-500 mt-0.5">010-****-5678</p>
+                            <p class="text-xs text-gray-600 mt-1 flex items-center gap-1"><i class="fa-solid fa-car text-yellow-600"></i><span id="profile-display-car">차량 정보 미등록</span></p>
+                        </div>
+                    </div>
+                    <button onclick="openProfileEditModal()" class="border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-bold px-3 py-2 rounded-xl transition-colors">
+                        프로필 수정
+                    </button>
+                </div>
+
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <div class="text-xs font-bold text-gray-500 flex items-center gap-1">
+                                <span>나의 매너 온도</span>
+                            </div>
+                            <div class="flex items-baseline gap-2 mt-1">
+                                <span id="manner-temp-value" class="text-3xl font-black text-blue-600">36.5°C</span>
+                                <span id="manner-temp-badge" class="text-xs font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                                    😊 따뜻함
+                                </span>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-[11px] text-gray-400 block">첫 온도 36.5°C</span>
+                            <span class="text-xs font-bold text-gray-600">최고 99°C</span>
+                        </div>
+                    </div>
+
+                    <div class="relative w-full bg-gray-100 rounded-full h-3.5 overflow-hidden">
+                        <div id="manner-temp-bar" class="manner-bar-gradient h-full rounded-full transition-all duration-700" style="width: 36.5%;"></div>
+                    </div>
+
+                    <div class="pt-3 border-t border-gray-100">
+                        <h4 class="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1">
+                            <i class="fa-solid fa-thumbs-up text-yellow-500"></i> 동승자들이 꼽은 매너 키워드
+                        </h4>
+                        <div id="manner-tags-container" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+
+                <div class="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-4">
+                    <div class="flex items-center justify-between pb-2 border-b border-gray-100">
+                        <h3 class="font-bold text-base text-gray-900 flex items-center gap-2">
+                            <i class="fa-solid fa-comment-dots text-yellow-500"></i> 동승자 후기 
+                            <span id="review-count-badge" class="text-xs bg-yellow-100 text-yellow-800 font-extrabold px-2 py-0.5 rounded-full">0</span>
+                        </h3>
+                        <div class="text-xs text-gray-500">
+                            평균 평점 <span id="review-avg-score" class="font-bold text-gray-900">4.9</span> / 5.0
+                        </div>
+                    </div>
+
+                    <div id="review-list" class="space-y-3 divide-y divide-gray-100"></div>
+                </div>
+            </div>
+        </section>
+
+        <p class="mt-5 text-center text-[11px] leading-relaxed text-gray-500">시제품 안내: 모집글·신청·채팅 데이터는 이 브라우저에만 저장되며 실제 운전자에게 전송되지 않습니다. 공휴일 달력 데이터: <a href="https://github.com/commenthol/date-holidays" target="_blank" rel="noreferrer" class="underline">date-holidays (CC BY-SA 3.0)</a></p>
+    </main>
+
+    <!-- 모달: 프로필 수정 -->
+    <div id="modal-profile-edit" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-md w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-base text-gray-900">프로필 수정</h3>
+                <button onclick="closeModal('modal-profile-edit')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+
+            <form onsubmit="handleProfileSave(event)" class="space-y-4">
+                <div class="flex flex-col items-center gap-2">
+                    <img id="edit-avatar-preview" src="" class="w-20 h-20 rounded-full object-cover border-2 border-yellow-400">
+                    <div class="flex items-center gap-2">
+                        <label class="cursor-pointer bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold px-3 py-1.5 rounded-lg">
+                            사진 업로드
+                            <input type="file" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+                        </label>
+                        <button type="button" onclick="useDefaultAvatar()" class="text-xs text-gray-500 underline">기본 이미지</button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">닉네임</label>
+                    <input type="text" id="edit-nickname" required maxlength="12" class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400 font-medium">
+                </div>
+
+                <div class="space-y-2.5 border-t border-gray-100 pt-3">
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-700">내 차량 정보</h4>
+                        <p class="text-[10px] text-gray-400 mt-0.5">저장한 차량 정보는 모집글에 공개됩니다.</p>
+                    </div>
+                    <div>
+                        <label for="edit-car-model" class="block text-xs font-semibold text-gray-600 mb-1">차종</label>
+                        <input type="text" id="edit-car-model" maxlength="40" placeholder="예: 현대 아반떼" class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label for="edit-car-color" class="block text-xs font-semibold text-gray-600 mb-1">차량 색상</label>
+                            <input type="text" id="edit-car-color" maxlength="20" placeholder="예: 흰색" class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400">
+                        </div>
+                        <div>
+                            <label for="edit-car-plate" class="block text-xs font-semibold text-gray-600 mb-1">차량 번호 (공개)</label>
+                            <input type="text" id="edit-car-plate" maxlength="12" placeholder="예: 12가 3456" class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-yellow-400">
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-gray-600 mb-1">이미지 URL 직접 입력 (선택)</label>
+                    <input type="url" id="edit-avatar-url" placeholder="https://example.com/image.jpg" class="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs focus:outline-none focus:border-yellow-400" oninput="previewUrlImage(this.value)">
+                </div>
+
+                <div class="pt-2 flex gap-2">
+                    <button type="button" onclick="closeModal('modal-profile-edit')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2.5 rounded-xl text-sm">
+                        취소
+                    </button>
+                    <button type="submit" class="flex-1 bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-bold py-2.5 rounded-xl text-sm transition-colors">
+                        저장하기
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 모달: 상세 경로 지도 보기 모달 -->
+    <div id="modal-ride" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-lg" id="modal-title">카풀 상세 정보</h3>
+                <button onclick="closeModal('modal-ride')" class="text-gray-400 hover:text-gray-600"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+            
+            <!-- 상세 모달 내 지도 및 경로 시각화 -->
+            <div id="detail-map" class="w-full h-56 bg-gray-100 rounded-xl border border-gray-200 flex items-center justify-center relative overflow-hidden">
+                <span class="text-xs text-gray-400">지도 로딩 중...</span>
+            </div>
+
+            <div id="modal-content" class="space-y-3 text-sm"></div>
+            
+            <button onclick="requestRide()" class="w-full bg-yellow-400 hover:bg-yellow-500 font-bold py-3 rounded-xl transition-colors">
+                동승 신청하기
+            </button>
+        </div>
+    </div>
+
+    <!-- 모달: SOS 긴급 알림 -->
+    <div id="modal-sos" class="fixed inset-0 bg-black/60 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl max-w-sm w-full p-6 text-center space-y-4">
+            <div class="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto text-2xl font-bold">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <div>
+                <h3 class="font-bold text-lg text-gray-900">긴급 비상 신고</h3>
+                <p class="text-xs text-gray-500 mt-1">이 화면은 위치를 표시할 뿐 자동 신고나 위치 전송을 하지 않습니다. 위급하면 112에 직접 신고해 주세요.</p>
+            </div>
+            <div class="bg-gray-100 p-3 rounded-xl text-xs text-left space-y-1">
+                <div><strong>현재 위치:</strong> <span id="sos-location">위치 정보를 불러오는 중...</span></div>
+                <div><strong>탑승 차량:</strong> <span id="sos-car-info">차량 정보 미등록</span></div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+                <a href="tel:112" class="bg-red-600 text-white font-bold py-2.5 rounded-xl text-sm flex items-center justify-center gap-1">
+                    <i class="fa-solid fa-phone"></i> 112 신고
+                </a>
+                <button onclick="closeModal('modal-sos')" class="bg-gray-200 text-gray-800 font-bold py-2.5 rounded-xl text-sm">
+                    취소
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 하단 모바일 네비게이션 바 -->
+    <nav class="md:hidden sticky bottom-0 bg-white border-t border-gray-200 flex justify-around py-2 z-30">
+        <button onclick="switchTab('feed')" class="flex flex-col items-center text-xs text-yellow-600 font-bold">
+            <i class="fa-solid fa-magnifying-glass text-lg mb-0.5"></i> 검색
+        </button>
+        <button onclick="switchTab('host')" class="flex flex-col items-center text-xs text-gray-500">
+            <i class="fa-solid fa-plus text-lg mb-0.5"></i> 모집
+        </button>
+        <button onclick="switchTab('chat')" class="flex flex-col items-center text-xs text-gray-500 relative">
+            <i class="fa-solid fa-comments text-lg mb-0.5"></i> 채팅
+        </button>
+        <button onclick="switchTab('profile')" class="flex flex-col items-center text-xs text-gray-500">
+            <i class="fa-solid fa-user text-lg mb-0.5"></i> 마이
+        </button>
+    </nav>
+
+    <!-- Kakao 지도를 사용하려면 아래 키를 설정하세요. 비워두면 OpenStreetMap을 사용합니다. -->
+    <script>window.HITCHONE_KAKAO_KEY = '';</script>
+    <!-- Custom Script -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

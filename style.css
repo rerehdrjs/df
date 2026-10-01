@@ -1,0 +1,73 @@
+@charset "UTF-8";
+
+/* 커스텀 스크롤바 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #9ca3af;
+}
+
+/* SOS 긴급 버튼 펄스 애니메이션 */
+.sos-pulse {
+    animation: pulse-red 2s infinite;
+}
+
+@keyframes pulse-red {
+    0% {
+        box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(220, 38, 38, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
+    }
+}
+
+/* 카카오톡 메시지 풍선 스타일 */
+.chat-bubble-mine {
+    background-color: #fee500;
+    color: #191919;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 2px;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+
+.chat-bubble-other {
+    background-color: #ffffff;
+    color: #191919;
+    border-top-left-radius: 2px;
+    border-top-right-radius: 12px;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+}
+
+/* 매너 온도 그라데이션 바 */
+.manner-bar-gradient {
+    background: linear-gradient(90deg, #3b82f6 0%, #eab308 50%, #ef4444 100%);
+}
+
+/* 지도 내 커스텀 마커 배지 스타일 */
+.kakao-map-badge {
+    background: #111827;
+    color: #ffffff;
+    padding: 4px 8px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: bold;
+    border: 2px solid #facc15;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
