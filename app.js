@@ -174,6 +174,11 @@ let hostMapSelectionTarget = 'dest';
 let mapSelectionRequestId = 0;
 let photonRequestQueue = Promise.resolve();
 let lastPhotonRequestAt = 0;
+let hostRouteRequestId = 0;
+let hostRoadRouteDistanceKm = null;
+let hostRoadRouteSource = null;
+let hostRouteLookupPending = false;
+let hostTollEstimateSource = 'pending';
 
 // DOM 로드 시 초기화
 document.addEventListener('DOMContentLoaded', () => {
@@ -299,7 +304,16 @@ async function refreshPricingAvailability() {
 }
 
 function clearHostLocation(type) {
+    hostRouteRequestId += 1;
+    hostRouteLookupPending = false;
+    hostRoadRouteDistanceKm = null;
+    hostRoadRouteSource = null;
     hostLocationCoords[type] = null;
+    document.getElementById('calc-dist').value = 0;
+    document.getElementById('calc-toll').value = 0;
+    hostTollEstimateSource = 'pending';
+    document.getElementById('toll-estimate-status').textContent = '출발지·도착지 선택 후 통행료를 자동 조회합니다.';
+    calculateCostCap();
     clearHostMapOverlays();
     const status = document.getElementById('map-route-status');
     if (status) status.textContent = '주소가 변경되었습니다. 다시 조회해 주세요.';
@@ -497,6 +511,15 @@ async function pickLocationFromMap(lat, lng) {
 // 3. 지도 위에 핀 마커 및 Polyline (경로선) 그리기
 function updateHostRouteMap(coords, type, label) {
     if (!hostMapInstance && !hostLeafletMap) return;
+    const requestId = ++hostRouteRequestId;
+    hostRouteLookupPending = false;
+    hostRoadRouteDistanceKm = null;
+    hostRoadRouteSource = null;
+    document.getElementById('calc-dist').value = 0;
+    document.getElementById('calc-toll').value = 0;
+    hostTollEstimateSource = 'pending';
+    document.getElementById('toll-estimate-status').textContent = '출발지·도착지 선택 후 통행료를 자동 조회합니다.';
+    calculateCostCap();
 
     const coordinate = {
         lat: typeof coords.getLat === 'function' ? coords.getLat() : Number(coords.lat),
@@ -513,8 +536,6 @@ function updateHostRouteMap(coords, type, label) {
         const kakaoPoints = points.map(point => new kakao.maps.LatLng(point.lat, point.lng));
         kakaoPoints.forEach(point => hostMarkers.push(new kakao.maps.Marker({ position: point, map: hostMapInstance })));
         if (kakaoPoints.length > 1) {
-            hostPolyline = new kakao.maps.Polyline({ path: kakaoPoints, strokeWeight: 5, strokeColor: '#f59e0b', strokeOpacity: 0.8, strokeStyle: 'solid' });
-            hostPolyline.setMap(hostMapInstance);
             const bounds = new kakao.maps.LatLngBounds();
             kakaoPoints.forEach(point => bounds.extend(point));
             hostMapInstance.setBounds(bounds);
@@ -526,7 +547,6 @@ function updateHostRouteMap(coords, type, label) {
         const leafletPoints = points.map(point => [point.lat, point.lng]);
         leafletPoints.forEach(point => hostLeafletMarkers.push(window.L.marker(point).addTo(hostLeafletMap)));
         if (leafletPoints.length > 1) {
-            hostLeafletPolyline = window.L.polyline(leafletPoints, { color: '#f59e0b', weight: 5, opacity: 0.8 }).addTo(hostLeafletMap);
             hostLeafletMap.fitBounds(window.L.latLngBounds(leafletPoints), { padding: [24, 24] });
         } else {
             hostLeafletMap.setView(leafletPoints[0], 13);
@@ -534,10 +554,9 @@ function updateHostRouteMap(coords, type, label) {
     }
 
     if (other) {
-        const km = Math.round(haversineKm(hostLocationCoords.origin, hostLocationCoords.dest) * 1.2);
-        document.getElementById('calc-dist').value = km;
-        document.getElementById('map-route-status').textContent = `출발지·도착지 선택 완료 · 직선거리 기반 추정 ${km}km (실제 도로 경로와 다를 수 있음)`;
-        calculateCostCap();
+        hostRouteLookupPending = true;
+        document.getElementById('map-route-status').textContent = '실제 자동차 주행 경로와 거리를 조회하고 있습니다...';
+        lookupDrivingRoute(requestId);
     } else {
         document.getElementById('map-route-status').textContent = `${label} 위치를 설정했습니다. 반대편 위치도 선택해 주세요.`;
     }
@@ -554,6 +573,172 @@ function clearHostMapOverlays() {
         if (hostLeafletPolyline) hostLeafletMap.removeLayer(hostLeafletPolyline);
         hostLeafletPolyline = null;
     }
+}
+
+async function lookupDrivingRoute(requestId) {
+    const origin = hostLocationCoords.origin;
+    const destination = hostLocationCoords.dest;
+    if (!origin || !destination) return;
+
+    let route;
+    let source = 'OpenStreetMap/OSRM';
+    let fallbackNote = '';
+    const tmapKey = String(window.HITCHONE_TMAP_APP_KEY || '').trim();
+
+    if (tmapKey) {
+        try {
+            route = await fetchTmapDrivingRoute(origin, destination, tmapKey);
+            source = 'Tmap';
+        } catch (error) {
+            console.warn('Tmap 경로 조회에 실패해 OSRM으로 재시도합니다.', error);
+            fallbackNote = 'Tmap 연결 실패 · ';
+        }
+    }
+
+    if (!route) {
+        try {
+            route = await fetchOsrmDrivingRoute(origin, destination);
+        } catch (error) {
+            console.warn('실제 도로 경로를 조회하지 못했습니다.', error);
+            if (requestId === hostRouteRequestId) {
+                hostRouteLookupPending = false;
+                document.getElementById('map-route-status').textContent = '실제 주행경로 조회에 실패했습니다. 이동거리를 직접 입력해 주세요.';
+                document.getElementById('toll-estimate-status').textContent = '통행료 자동 조회에 실패했습니다. 직접 입력해 주세요.';
+            }
+            return;
+        }
+    }
+
+    if (requestId !== hostRouteRequestId) return;
+    hostRouteLookupPending = false;
+    const distanceKm = Math.round(route.distanceMeters / 100) / 10;
+    hostRoadRouteDistanceKm = distanceKm;
+    hostRoadRouteSource = source;
+    document.getElementById('calc-dist').value = distanceKm;
+    let tollFare = Number.isFinite(Number(route.tollFare)) && route.tollFare !== null ? Number(route.tollFare) : null;
+    if (tollFare === null) {
+        tollFare = estimateTollFare(distanceKm);
+        hostTollEstimateSource = 'distance-estimate';
+        document.getElementById('calc-toll').value = tollFare;
+        document.getElementById('toll-estimate-status').textContent = `${source} 경로 거리 기준 참고 통행료 추정: ${tollFare.toLocaleString()}원 (실제 톨게이트 요금과 다를 수 있음)`;
+    } else {
+        hostTollEstimateSource = 'tmap';
+        document.getElementById('calc-toll').value = Math.round(tollFare);
+        document.getElementById('toll-estimate-status').textContent = `Tmap 경로 응답 통행료: ${Math.round(tollFare).toLocaleString()}원`;
+    }
+    if (route.coordinates.length > 1) drawDrivingRoute(route.coordinates);
+    const duration = route.durationSeconds ? ` · 예상 ${formatRouteDuration(route.durationSeconds)}` : '';
+    document.getElementById('map-route-status').textContent = `${fallbackNote}${source} 실제 도로 거리 ${distanceKm.toLocaleString()}km${duration} · 실시간 교통은 미포함`;
+    calculateCostCap();
+}
+
+async function fetchTmapDrivingRoute(origin, destination, appKey) {
+    const response = await fetchWithTimeout('https://apis.openapi.sk.com/tmap/routes?version=1&format=json', {
+        method: 'POST',
+        headers: {
+            appKey,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            startX: String(origin.lng),
+            startY: String(origin.lat),
+            endX: String(destination.lng),
+            endY: String(destination.lat),
+            reqCoordType: 'WGS84GEO',
+            resCoordType: 'WGS84GEO',
+            searchOption: '0',
+            trafficInfo: 'N'
+        })
+    });
+    if (!response.ok) throw new Error(`Tmap HTTP ${response.status}`);
+    const data = await response.json();
+    const features = Array.isArray(data.features) ? data.features : [];
+    const properties = features.map(feature => feature.properties || {}).find(item => Number(item.totalDistance) > 0) || {};
+    const coordinates = [];
+    features.forEach(feature => {
+        const geometry = feature.geometry || {};
+        if (geometry.type === 'Point') coordinates.push(geometry.coordinates);
+        else if (geometry.type === 'LineString') coordinates.push(...geometry.coordinates);
+        else if (geometry.type === 'MultiLineString') geometry.coordinates.forEach(line => coordinates.push(...line));
+    });
+    const validCoordinates = coordinates.filter(point => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+        .map(point => [Number(point[0]), Number(point[1])]);
+    let distanceMeters = Number(properties.totalDistance || data.totalDistance);
+    if (!(distanceMeters > 0) && validCoordinates.length > 1) {
+        distanceMeters = validCoordinates.slice(1).reduce((total, point, index) => {
+            const previous = validCoordinates[index];
+            return total + haversineKm({ lat: previous[1], lng: previous[0] }, { lat: point[1], lng: point[0] }) * 1000;
+        }, 0);
+    }
+    if (!(distanceMeters > 0)) throw new Error('Tmap 응답에 경로 거리가 없습니다.');
+    const fareProperty = features.map(feature => feature.properties || {})
+        .find(item => item.totalFare !== undefined || item.tollFare !== undefined);
+    const rawTollFare = fareProperty?.tollFare ?? fareProperty?.totalFare ?? data.tollFare ?? data.totalFare;
+    const tollFare = rawTollFare === undefined || rawTollFare === null || rawTollFare === '' ? null : Number(rawTollFare);
+    return {
+        distanceMeters,
+        durationSeconds: Number(properties.totalTime || data.totalTime) || 0,
+        tollFare: Number.isFinite(tollFare) && tollFare >= 0 ? tollFare : null,
+        coordinates: validCoordinates
+    };
+}
+
+async function fetchOsrmDrivingRoute(origin, destination) {
+    const coordinates = `${origin.lng},${origin.lat};${destination.lng},${destination.lat}`;
+    const url = `https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson&steps=false`;
+    const response = await fetchWithTimeout(url);
+    if (!response.ok) throw new Error(`OSRM HTTP ${response.status}`);
+    const data = await response.json();
+    const route = data.routes?.[0];
+    if (data.code !== 'Ok' || !route || !(route.distance > 0)) throw new Error('도로 경로를 찾지 못했습니다.');
+    return {
+        distanceMeters: route.distance,
+        durationSeconds: route.duration || 0,
+        tollFare: null,
+        coordinates: route.geometry?.coordinates || []
+    };
+}
+
+function estimateTollFare(distanceKm) {
+    // Tmap 통행료 응답이 없을 때만 사용하는 승용차 기준 참고 추정치
+    return Math.max(0, Math.round((1000 + Math.max(0, distanceKm) * 48) / 100) * 100);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function drawDrivingRoute(coordinates) {
+    if (hostPolyline) hostPolyline.setMap(null);
+    hostPolyline = null;
+    if (hostLeafletMap && hostLeafletPolyline) hostLeafletMap.removeLayer(hostLeafletPolyline);
+    hostLeafletPolyline = null;
+
+    if (hostMapProvider === 'kakao' && hostMapInstance) {
+        const path = coordinates.map(([lng, lat]) => new kakao.maps.LatLng(lat, lng));
+        hostPolyline = new kakao.maps.Polyline({ path, strokeWeight: 6, strokeColor: '#2563eb', strokeOpacity: 0.9, strokeStyle: 'solid' });
+        hostPolyline.setMap(hostMapInstance);
+        const bounds = new kakao.maps.LatLngBounds();
+        path.forEach(point => bounds.extend(point));
+        hostMapInstance.setBounds(bounds);
+    } else if (hostMapProvider === 'leaflet' && hostLeafletMap) {
+        const path = coordinates.map(([lng, lat]) => [lat, lng]);
+        hostLeafletPolyline = window.L.polyline(path, { color: '#2563eb', weight: 6, opacity: 0.9 }).addTo(hostLeafletMap);
+        hostLeafletMap.fitBounds(hostLeafletPolyline.getBounds(), { padding: [24, 24] });
+    }
+}
+
+function formatRouteDuration(durationSeconds) {
+    const minutes = Math.round(durationSeconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours ? `${hours}시간 ${remainingMinutes}분` : `${remainingMinutes}분`;
 }
 
 const hostLocationCoords = { origin: null, dest: null };
@@ -705,6 +890,12 @@ function calculateCostCap() {
     priceInput.setCustomValidity(priceInput.value && Number(priceInput.value) > maxPerPerson ? `예상 비용 ${maxPerPerson.toLocaleString()}원 이하로 입력해 주세요.` : '');
 }
 
+function handleTollInput() {
+    hostTollEstimateSource = 'manual';
+    document.getElementById('toll-estimate-status').textContent = '통행료를 직접 입력한 금액으로 계산합니다.';
+    calculateCostCap();
+}
+
 async function handleHostSubmit(e) {
     e.preventDefault();
     const origin = document.getElementById('host-origin').value.trim();
@@ -714,22 +905,41 @@ async function handleHostSubmit(e) {
     const seats = parseInt(document.getElementById('host-seats').value);
     let price = parseInt(document.getElementById('host-price').value, 10);
     const isFemale = document.getElementById('tag-female').checked;
-    const cap = parseInt(document.getElementById('host-price').max, 10) || 0;
     if (!rawTime || new Date(rawTime) <= new Date()) {
         alert('출발 일시는 현재 이후로 선택해 주세요.');
         return;
     }
     const fareEligibility = await getFareEligibility(rawTime);
     if (!fareEligibility.allowed) price = 0;
-    if (fareEligibility.allowed && (!Number.isFinite(price) || price < 0 || price > cap)) {
-        alert(`1인당 분담금은 예상 비용 ${cap.toLocaleString()}원 이하로 입력해 주세요.`);
-        return;
-    }
     if (hostLocationCoords.origin && hostLocationCoords.dest && haversineKm(hostLocationCoords.origin, hostLocationCoords.dest) < 1) {
         alert('출발지와 도착지를 다시 확인해 주세요.');
         return;
     }
+    if (hostLocationCoords.origin && hostLocationCoords.dest && hostRouteLookupPending) {
+        alert('실제 주행 거리를 조회하고 있습니다. 조회가 끝난 후 등록해 주세요.');
+        return;
+    }
+    if (!(Number(document.getElementById('calc-dist').value) > 0)) {
+        alert('실제 경로 조회에 실패했으면 주행 거리를 직접 입력해 주세요.');
+        return;
+    }
     const tags = [...document.querySelectorAll('#host-form input[type="checkbox"]:checked')].map(input => input.value);
+    const distanceKm = Math.max(0, Number(document.getElementById('calc-dist').value) || 0);
+    let tollFare = Math.max(0, Number(document.getElementById('calc-toll').value) || 0);
+    if (hostTollEstimateSource === 'pending') {
+        tollFare = estimateTollFare(distanceKm);
+        document.getElementById('calc-toll').value = tollFare;
+        hostTollEstimateSource = 'distance-estimate';
+        document.getElementById('toll-estimate-status').textContent = `거리 기준 참고 통행료 추정: ${tollFare.toLocaleString()}원 (실제 요금과 다를 수 있음)`;
+        calculateCostCap();
+    }
+    const cap = parseInt(document.getElementById('host-price').max, 10) || 0;
+    if (fareEligibility.allowed && (!Number.isFinite(price) || price < 0 || price > cap)) {
+        alert(`예상 통행료와 유류비를 반영한 분담금 ${cap.toLocaleString()}원 이하로 입력해 주세요.`);
+        return;
+    }
+    const fuelEfficiency = Math.max(1, Number(document.getElementById('calc-eff').value) || 12);
+    const estimatedFuelCost = Math.round((distanceKm / fuelEfficiency) * 1650);
 
     const newRide = {
         id: `ride-${Date.now()}`,
@@ -743,6 +953,12 @@ async function handleHostSubmit(e) {
         waypoints: [],
         waypointCoords: [],
         departureTime: time,
+        distanceKm: hostRoadRouteDistanceKm || distanceKm,
+        distanceSource: hostRoadRouteSource || '직접 입력',
+        tollFare,
+        tollEstimateSource: hostTollEstimateSource,
+        estimatedFuelCost,
+        estimatedTotalCost: tollFare + estimatedFuelCost,
         seatsLeft: seats,
         totalSeats: seats,
         price: price,
@@ -799,6 +1015,7 @@ function renderRides(ridesToRender) {
                 <div class="text-xs text-gray-500 flex items-center gap-3">
                     <span><i class="fa-regular fa-clock mr-1"></i>${escapeHTML(formatDateTime(ride.departureTime))}</span>
                     <span><i class="fa-solid fa-user-group mr-1"></i>잔여 ${Number(ride.seatsLeft) || 0}/${Number(ride.totalSeats) || 0}석</span>
+                    ${Number(ride.distanceKm) > 0 ? `<span><i class="fa-solid fa-road mr-1"></i>주행 ${Number(ride.distanceKm).toLocaleString()}km</span>` : ''}
                 </div>
             </div>
 
@@ -844,6 +1061,8 @@ function openRideModal(rideId) {
             <div class="font-bold text-gray-900">${escapeHTML(ride.origin)} ➔ ${escapeHTML(ride.destination)}</div>
             <div class="text-xs text-gray-500">출발 시각: ${escapeHTML(formatDateTime(ride.departureTime))}</div>
             <div class="text-xs text-gray-500">이용 차량: ${escapeHTML(ride.carInfo || '차량 정보 미등록')}</div>
+            ${Number(ride.distanceKm) > 0 ? `<div class="text-xs text-blue-700">${ride.distanceSource === '직접 입력' ? '입력 주행 거리' : '실제 도로 주행 거리'}: ${Number(ride.distanceKm).toLocaleString()}km${ride.distanceSource ? ` (${escapeHTML(ride.distanceSource)})` : ''}</div>` : ''}
+            ${Number.isFinite(Number(ride.tollFare)) ? `<div class="text-xs text-gray-600">예상 통행료: ${Number(ride.tollFare).toLocaleString()}원${ride.tollEstimateSource === 'tmap' ? ' (Tmap)' : ride.tollEstimateSource === 'manual' ? ' (직접 입력)' : ' (거리 기준 추정)'}</div><div class="text-xs text-gray-600">예상 유류비: ${Number(ride.estimatedFuelCost || 0).toLocaleString()}원</div><div class="text-xs font-semibold text-gray-700">예상 운행비 합계: ${Number(ride.estimatedTotalCost || 0).toLocaleString()}원</div>` : ''}
         </div>
         <div class="space-y-1">
             <span class="font-bold text-xs text-gray-700">드라이버 정보</span>
